@@ -1,0 +1,183 @@
+:root {
+  --ink: #1b1714;
+  --paper: #f3ead7;
+  --rule: #c9b89a;
+  --stamp: #8c1d1d;
+  --moss: #2f4a3c;
+  --panel: #fffaf1;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #efe3c8 0%, transparent 55%),
+    repeating-linear-gradient(0deg, transparent, transparent 27px, rgba(140, 29, 29, 0.04) 28px),
+    var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), "Iowan Old Style", serif;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.18;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+}
+
+a {
+  color: var(--stamp);
+}
+
+.shell {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 48px 24px 96px;
+}
+
+.mast {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 24px;
+  align-items: end;
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 20px;
+}
+
+.mast h1 {
+  font-family: var(--font-display), serif;
+  font-weight: 500;
+  font-size: clamp(3rem, 8vw, 5.4rem);
+  line-height: 0.9;
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.mast p {
+  margin: 12px 0 0;
+  max-width: 42ch;
+  font-size: 1.05rem;
+}
+
+.badge {
+  border: 1.5px dashed var(--stamp);
+  color: var(--stamp);
+  padding: 10px 14px;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  transform: rotate(3deg);
+}
+
+.panel {
+  margin-top: 32px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  box-shadow: 8px 10px 0 rgba(27, 23, 20, 0.08);
+  padding: 28px;
+}
+
+label {
+  display: block;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+input[type="file"],
+select,
+input[type="text"],
+input[type="number"] {
+  width: 100%;
+  border: 1px solid var(--ink);
+  background: #fff;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 160px;
+  gap: 16px;
+}
+
+.drop {
+  border: 2px dashed var(--ink);
+  padding: 28px;
+  text-align: center;
+  background: repeating-linear-gradient(135deg, #fffaf1, #fffaf1 8px, #f6edd8 8px, #f6edd8 16px);
+}
+
+button {
+  font-family: var(--font-mono), monospace;
+  background: var(--ink);
+  color: var(--paper);
+  border: 0;
+  padding: 12px 18px;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+th {
+  text-align: left;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--ink);
+  padding: 8px 6px;
+}
+
+td {
+  border-bottom: 1px solid var(--rule);
+  padding: 8px 6px;
+  vertical-align: top;
+}
+
+.warn {
+  color: var(--stamp);
+  font-size: 0.9rem;
+}
+
+.fine {
+  margin-top: 40px;
+  font-size: 0.8rem;
+  color: #5a5146;
+  max-width: 70ch;
+}
+
+.id {
+  font-family: var(--font-mono), monospace;
+  color: var(--moss);
+}
