@@ -36,7 +36,14 @@ export function formatCasillaValue(casilla: Casilla, kind: FieldCoord["kind"]): 
 }
 
 export function resolveTemplatePath(form: FormCode, cwd = process.cwd()): string {
-  return path.join(cwd, "public", "templates", `form-${form}-p1.pdf`);
+  return path.join(cwd, "lib", "pdf", "templates", `form-${form}-p1.pdf`);
+}
+
+function sanitizePdfText(text: string): string {
+  return text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, "");
 }
 
 export async function fillFormPdf(
@@ -57,7 +64,11 @@ export async function fillFormPdf(
     if (!box) {
       continue;
     }
-    const text = formatCasillaValue(casilla, box.kind);
+    const raw = formatCasillaValue(casilla, box.kind);
+    if (!raw) {
+      continue;
+    }
+    const text = box.kind === "text" ? sanitizePdfText(raw) : raw;
     if (!text) {
       continue;
     }

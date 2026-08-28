@@ -56,4 +56,5 @@ export type DeclarationDraft = {
   taxpayer: Taxpayer;
   casillas: Casilla[];
   lines: ExogenaLine[];
+  reviews?: { pass: number; label: string; ok: boolean; notes: string[] }[];
 };

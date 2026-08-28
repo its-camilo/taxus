@@ -95,6 +95,55 @@ function detectForm(docType: string): Taxpayer["suggestedForm"] {
   return "210";
 }
 
+function headerValue(row: ExcelJS.Row, col = 3): string {
+  return cellStr(row.getCell(col).value);
+}
+
+function extractHeaderTaxpayer(sheet: ExcelJS.Worksheet): Pick<
+  Taxpayer,
+  "year" | "documentType" | "documentNumber" | "fullName" | "firstLastName" | "secondLastName" | "firstName" | "otherNames" | "suggestedForm"
+> {
+  let year = new Date().getFullYear() - 1;
+  let documentType = "C.C.";
+  let documentNumber = "";
+  let fullName = "";
+
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber > 11) {
+      return;
+    }
+    const label = cellStr(row.getCell(1).value).toLowerCase();
+    const value = headerValue(row) || headerValue(row, 2);
+    if (!label) {
+      return;
+    }
+    if (label.startsWith("año") && /^\d{4}$/.test(value)) {
+      year = Number(value);
+      return;
+    }
+    if (label.includes("tipo de documento") && value) {
+      documentType = value;
+      return;
+    }
+    if (label.includes("identificación") && value) {
+      documentNumber = value.replace(/\s/g, "");
+      return;
+    }
+    if ((label.includes("nombres") || label.includes("razón social")) && value && !label.includes("tipo")) {
+      fullName = value;
+    }
+  });
+
+  return {
+    year,
+    documentType,
+    documentNumber,
+    fullName,
+    ...splitName(fullName),
+    suggestedForm: detectForm(documentType),
+  };
+}
+
 function headerIndex(headers: string[]): Record<string, number> {
   const map: Record<string, number> = {};
   headers.forEach((h, i) => {
@@ -125,6 +174,20 @@ function kindForHeader(formato: string, header: string): AmountKind {
   return base;
 }
 
+function findHeaderRow(sheet: ExcelJS.Worksheet): number {
+  let headerRow = 12;
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber > 20) {
+      return;
+    }
+    const first = cellStr(row.getCell(1).value).toLowerCase();
+    if (first.includes("código de formato") || first === "codigo de formato") {
+      headerRow = rowNumber;
+    }
+  });
+  return headerRow;
+}
+
 export async function parseExogenaWorkbook(buffer: ArrayBuffer): Promise<ParseResult> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
@@ -137,7 +200,8 @@ export async function parseExogenaWorkbook(buffer: ArrayBuffer): Promise<ParseRe
   if (!general) {
     warnings.push("No se encontró la hoja reporteInformadoGeneralXls.");
   } else {
-    const headerRow = general.getRow(12);
+    const headerRowNum = findHeaderRow(general);
+    const headerRow = general.getRow(headerRowNum);
     const headers: string[] = [];
     headerRow.eachCell({ includeEmpty: true }, (cell, col) => {
       headers[col - 1] = cellStr(cell.value);
@@ -145,7 +209,7 @@ export async function parseExogenaWorkbook(buffer: ArrayBuffer): Promise<ParseRe
     const idx = headerIndex(headers);
 
     general.eachRow((row, rowNumber) => {
-      if (rowNumber <= 12) {
+      if (rowNumber <= headerRowNum) {
         return;
       }
       const values: unknown[] = [];
@@ -223,18 +287,26 @@ export async function parseExogenaWorkbook(buffer: ArrayBuffer): Promise<ParseRe
     });
   }
 
+  const header = general ? extractHeaderTaxpayer(general) : null;
   const first = general?.getRow(13);
-  const docType = cellStr(first?.getCell(11).value);
-  const docNumber = cellStr(first?.getCell(12).value);
-  const fullName = cellStr(first?.getCell(14).value);
-  const year = Number(first?.getCell(5).value) || new Date().getFullYear() - 1;
+  const docType = header?.documentType || cellStr(first?.getCell(11).value);
+  const docNumber = header?.documentNumber || cellStr(first?.getCell(12).value);
+  const fullName = header?.fullName || cellStr(first?.getCell(14).value);
+  const year = header?.year || Number(first?.getCell(5).value) || new Date().getFullYear() - 1;
 
   const taxpayer: Taxpayer = {
     year,
     documentType: docType || "C.C.",
     documentNumber: docNumber,
     fullName,
-    ...splitName(fullName),
+    ...(header?.fullName
+      ? {
+          firstLastName: header.firstLastName,
+          secondLastName: header.secondLastName,
+          firstName: header.firstName,
+          otherNames: header.otherNames,
+        }
+      : splitName(fullName)),
     suggestedForm: detectForm(docType || "C.C."),
   };
 

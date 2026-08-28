@@ -20,7 +20,7 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Taxus — borrador de renta 110 / 210",
+  title: "Taxus",
   description: "Borrador de declaración de renta a partir de información exógena y el Estatuto Tributario.",
 };
 

@@ -32,9 +32,16 @@ function line(partial: Partial<ExogenaLine> & Pick<ExogenaLine, "monto" | "kind"
 async function sampleWorkbook(): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("reporteInformadoGeneralXls");
-  for (let i = 1; i <= 11; i += 1) {
-    ws.addRow(["meta"]);
-  }
+  ws.addRow(["Detalle consulta general de lo reportado por terceros"]);
+  ws.addRow(["Consulta Realizada por:"]);
+  ws.addRow(["Fecha corte del proceso", "", "07/07/2026"]);
+  ws.addRow(["Parámetros de Consulta:"]);
+  ws.addRow(["Año", "", 2025]);
+  ws.addRow(["Persona Reportada"]);
+  ws.addRow(["Tipo de documento", "", "C. C."]);
+  ws.addRow(["Identificación", "", "1000000000"]);
+  ws.addRow(["Nombres / Razón social", "", "PEREZ GOMEZ ANA MARIA"]);
+  ws.addRow(["Formato", "Formato", "Formato", "Formato", "Formato", "Formato", "Formato", "Formato", "Persona que reporta"]);
   ws.addRow([
     "Código de Formato",
     "Nombre del Formato",
@@ -160,6 +167,8 @@ describe("exogena parser", () => {
   it("maps 2276 trabajo, 1020 rendimientos and 5248 no laboral", async () => {
     const parsed = await parseExogenaWorkbook(await sampleWorkbook());
     expect(parsed.taxpayer.documentNumber).toBe("1000000000");
+    expect(parsed.taxpayer.fullName).toBe("PEREZ GOMEZ ANA MARIA");
+    expect(parsed.taxpayer.firstLastName).toBe("PEREZ");
     expect(parsed.taxpayer.suggestedForm).toBe("210");
     const trabajo = parsed.lines.filter((l) => l.formato === "2276");
     expect(trabajo[0]?.monto).toBe(711750);
@@ -279,6 +288,21 @@ describe("overrides and classify fallback", () => {
       line({ monto: 10, kind: "ambiguous", tipoMonto: "complementario" }),
     ]);
     expect(out[0]?.kind).toBe("no_laboral_ingreso");
+  });
+});
+
+describe("triple review", () => {
+  it("runs three passes before draft", async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    const { tripleReviewSources } = await import("@/lib/rag/triple-review");
+    const lines = [
+      line({ monto: 100, kind: "trabajo_ingreso", formato: "2276", tipoMonto: "Certificado - Total ingresos brutos rentas de trabajo y pensión" }),
+    ];
+    const out = await tripleReviewSources(lines, taxpayer, "210");
+    expect(out.passes).toHaveLength(3);
+    expect(out.passes[0]?.label).toContain("Integridad");
+    expect(out.passes[1]?.label).toContain("Estatuto");
+    expect(out.passes[2]?.label).toContain("Consolidación");
   });
 });
 

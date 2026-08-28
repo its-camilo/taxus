@@ -12,6 +12,7 @@ export default function HomePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [reviews, setReviews] = useState<DeclarationDraft["reviews"]>([]);
   const [draft, setDraft] = useState<DeclarationDraft | null>(null);
   const [blobUrl, setBlobUrl] = useState("");
 
@@ -53,6 +54,7 @@ export default function HomePage() {
         body: JSON.stringify({ form: parsed.form, taxpayer: parsed.taxpayer, lines: parsed.lines }),
       }).then((r) => r.json() as Promise<DeclarationDraft>);
       setDraft(proposed);
+      setReviews(proposed.reviews ?? []);
       setStep("review");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -96,7 +98,8 @@ export default function HomePage() {
         body: JSON.stringify({ form: draft.form, casillas: draft.casillas }),
       });
       if (!res.ok) {
-        throw new Error("No se pudo generar el PDF");
+        const err = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(err?.error ?? "No se pudo generar el PDF");
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -158,6 +161,18 @@ export default function HomePage() {
             <p key={w} className="warn">
               {w}
             </p>
+          ))}
+          {(reviews ?? []).map((r) => (
+            <details key={r.pass} className="review-pass">
+              <summary>
+                Revisión {r.pass}/3 — {r.label} {r.ok ? "✓" : "!"}
+              </summary>
+              <ul>
+                {r.notes.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+              </ul>
+            </details>
           ))}
           <table>
             <thead>
