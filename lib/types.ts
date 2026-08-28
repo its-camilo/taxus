@@ -20,6 +20,19 @@ export type ExogenaLine = {
   tipoMonto: string;
   kind: AmountKind;
   evidencia: string;
+  sheetName?: string;
+};
+
+export type SheetSummary = {
+  name: string;
+  rowCount: number;
+  linesExtracted: number;
+};
+
+export type ExternalDocSummary = {
+  name: string;
+  type: "pdf" | "csv";
+  linesExtracted: number;
 };
 
 export type Taxpayer = {
@@ -39,6 +52,7 @@ export type ParseResult = {
   taxpayer: Taxpayer;
   lines: ExogenaLine[];
   warnings: string[];
+  sheets: SheetSummary[];
 };
 
 export type Casilla = {
@@ -56,5 +70,12 @@ export type DeclarationDraft = {
   taxpayer: Taxpayer;
   casillas: Casilla[];
   lines: ExogenaLine[];
-  reviews?: { pass: number; label: string; ok: boolean; notes: string[] }[];
+  reviews?: {
+    round: number;
+    pass: number;
+    label: string;
+    ok: boolean;
+    notes: string[];
+    agent?: string;
+  }[];
 };

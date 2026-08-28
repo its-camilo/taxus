@@ -1,9 +1,22 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { Casilla, DeclarationDraft, ExogenaLine, FormCode, Taxpayer } from "@/lib/types";
+import type { Casilla, DeclarationDraft, ExogenaLine, ExternalDocSummary, FormCode, SheetSummary, Taxpayer } from "@/lib/types";
 
 type Step = "upload" | "review" | "done";
+
+function casillaOverrides(casillas: Casilla[]): { numeric: Record<string, number>; text: Record<string, string> } {
+  const numeric: Record<string, number> = {};
+  const text: Record<string, string> = {};
+  for (const c of casillas) {
+    if (typeof c.value === "number") {
+      numeric[c.id] = c.value;
+    } else if (c.value !== undefined && c.value !== "") {
+      text[c.id] = String(c.value);
+    }
+  }
+  return { numeric, text };
+}
 
 export default function HomePage() {
   const [step, setStep] = useState<Step>("upload");
@@ -16,15 +29,7 @@ export default function HomePage() {
   const [draft, setDraft] = useState<DeclarationDraft | null>(null);
   const [blobUrl, setBlobUrl] = useState("");
 
-  const overrides = useMemo(() => {
-    const o: Record<string, number> = {};
-    for (const c of draft?.casillas ?? []) {
-      if (typeof c.value === "number") {
-        o[c.id] = c.value;
-      }
-    }
-    return o;
-  }, [draft]);
+  const overrides = useMemo(() => casillaOverrides(draft?.casillas ?? []), [draft]);
 
   async function onParse(event: React.FormEvent) {
     event.preventDefault();
@@ -45,13 +50,26 @@ export default function HomePage() {
         if (!r.ok) {
           throw new Error(j.error ?? "No se pudo leer el archivo");
         }
-        return j as { taxpayer: Taxpayer; lines: ExogenaLine[]; warnings: string[]; form: FormCode };
+        return j as {
+          taxpayer: Taxpayer;
+          lines: ExogenaLine[];
+          warnings: string[];
+          sheets: SheetSummary[];
+          externalDocs: ExternalDocSummary[];
+          form: FormCode;
+        };
       });
       setWarnings(parsed.warnings ?? []);
       const proposed = await fetch("/api/propose", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ form: parsed.form, taxpayer: parsed.taxpayer, lines: parsed.lines }),
+        body: JSON.stringify({
+          form: parsed.form,
+          taxpayer: parsed.taxpayer,
+          lines: parsed.lines,
+          sheets: parsed.sheets,
+          externalDocs: parsed.externalDocs,
+        }),
       }).then((r) => r.json() as Promise<DeclarationDraft>);
       setDraft(proposed);
       setReviews(proposed.reviews ?? []);
@@ -63,15 +81,28 @@ export default function HomePage() {
     }
   }
 
-  async function onEdit(id: string, raw: string) {
+  async function onEditCasilla(id: string, raw: string) {
     if (!draft) {
       return;
     }
-    const nextVal = Number(raw.replace(/\./g, "").replace(",", "."));
-    if (!Number.isFinite(nextVal)) {
+    const casilla = draft.casillas.find((c) => c.id === id);
+    if (!casilla) {
       return;
     }
-    const nextOverrides = { ...overrides, [id]: nextVal };
+
+    const nextNumeric = { ...overrides.numeric };
+    const nextText = { ...overrides.text };
+
+    if (typeof casilla.value === "number") {
+      const nextVal = Number(raw.replace(/\./g, "").replace(",", "."));
+      if (!Number.isFinite(nextVal)) {
+        return;
+      }
+      nextNumeric[id] = nextVal;
+    } else {
+      nextText[id] = raw;
+    }
+
     const res = await fetch("/api/recalc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -79,10 +110,42 @@ export default function HomePage() {
         form: draft.form,
         taxpayer: draft.taxpayer,
         lines: draft.lines,
-        overrides: nextOverrides,
+        overrides: nextNumeric,
+        textOverrides: nextText,
       }),
     }).then((r) => r.json() as Promise<{ casillas: Casilla[] }>);
-    setDraft({ ...draft, casillas: res.casillas });
+
+    const updatedText = casillaOverrides(res.casillas).text;
+    const nextTaxpayer =
+      draft.form === "210"
+        ? {
+            ...draft.taxpayer,
+            year: Number(updatedText["1"]) || draft.taxpayer.year,
+            documentNumber: updatedText["5"] ?? draft.taxpayer.documentNumber,
+            dv: updatedText["6"] ?? draft.taxpayer.dv,
+            firstLastName: updatedText["7"] ?? draft.taxpayer.firstLastName,
+            secondLastName: updatedText["8"] ?? draft.taxpayer.secondLastName,
+            firstName: updatedText["9"] ?? draft.taxpayer.firstName,
+            otherNames: updatedText["10"] ?? draft.taxpayer.otherNames,
+            fullName:
+              [
+                updatedText["7"] ?? draft.taxpayer.firstLastName,
+                updatedText["8"] ?? draft.taxpayer.secondLastName,
+                updatedText["9"] ?? draft.taxpayer.firstName,
+                updatedText["10"] ?? draft.taxpayer.otherNames,
+              ]
+                .filter(Boolean)
+                .join(" ") || draft.taxpayer.fullName,
+          }
+        : {
+            ...draft.taxpayer,
+            year: Number(updatedText["1"]) || draft.taxpayer.year,
+            documentNumber: updatedText["5"] ?? draft.taxpayer.documentNumber,
+            dv: updatedText["6"] ?? draft.taxpayer.dv,
+            fullName: updatedText["11"] ?? draft.taxpayer.fullName,
+          };
+
+    setDraft({ ...draft, taxpayer: nextTaxpayer, casillas: res.casillas });
   }
 
   async function onPdf() {
@@ -112,6 +175,8 @@ export default function HomePage() {
     }
   }
 
+  const reviewRounds = [...new Set((reviews ?? []).map((r) => r.round))];
+
   return (
     <main className="shell">
       <header className="mast">
@@ -122,7 +187,7 @@ export default function HomePage() {
             Tributario.
           </p>
         </div>
-        <div className="badge">No es Muisca · AG 2025/2026</div>
+        <div className="badge">AG 2025/2026</div>
       </header>
 
       {step === "upload" && (
@@ -145,7 +210,7 @@ export default function HomePage() {
           {error && <p className="warn">{error}</p>}
           <div className="actions">
             <button type="submit" disabled={busy}>
-              {busy ? "Leyendo…" : "Armar casillas"}
+              {busy ? "Revisando documentos…" : "Armar casillas"}
             </button>
           </div>
         </form>
@@ -156,21 +221,31 @@ export default function HomePage() {
           <h2>
             Formulario {draft.form} · {draft.taxpayer.fullName} · {draft.year}
           </h2>
-          <p>Revise y corrija. Los totales se recalculan. El PDF oficial se genera al continuar.</p>
+          <p>Revise y corrija todos los campos. Los totales se recalculan al editar montos.</p>
           {warnings.map((w) => (
             <p key={w} className="warn">
               {w}
             </p>
           ))}
-          {(reviews ?? []).map((r) => (
-            <details key={r.pass} className="review-pass">
+          {reviewRounds.map((round) => (
+            <details key={round} className="review-pass">
               <summary>
-                Revisión {r.pass}/3 — {r.label} {r.ok ? "✓" : "!"}
+                Ronda {round} — {(reviews ?? []).filter((r) => r.round === round).length} revisiones{" "}
+                {(reviews ?? []).filter((r) => r.round === round).every((r) => r.ok) ? "✓" : "!"}
               </summary>
               <ul>
-                {r.notes.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
+                {(reviews ?? [])
+                  .filter((r) => r.round === round)
+                  .map((r) => (
+                    <li key={`${r.round}-${r.pass}-${r.agent}`}>
+                      <strong>{r.agent ?? r.label}</strong>: {r.label} {r.ok ? "✓" : "!"}
+                      <ul>
+                        {r.notes.map((n) => (
+                          <li key={n}>{n}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
               </ul>
             </details>
           ))}
@@ -189,16 +264,12 @@ export default function HomePage() {
                   <td className="id">{c.id}</td>
                   <td>{c.label}</td>
                   <td>
-                    {typeof c.value === "number" ? (
-                      <input
-                        type="number"
-                        defaultValue={c.value}
-                        key={`${c.id}-${c.value}`}
-                        onBlur={(e) => onEdit(c.id, e.target.value)}
-                      />
-                    ) : (
-                      c.value
-                    )}
+                    <input
+                      type={typeof c.value === "number" ? "number" : "text"}
+                      defaultValue={c.value}
+                      key={`${c.id}-${c.value}`}
+                      onBlur={(e) => onEditCasilla(c.id, e.target.value)}
+                    />
                   </td>
                   <td>
                     {c.source}
@@ -223,7 +294,7 @@ export default function HomePage() {
       {step === "done" && (
         <section className="panel">
           <h2>PDF listo</h2>
-          <p>Descargue el formulario diligenciado (página 1 de la plantilla DIAN). No sustituye la presentación en Muisca.</p>
+          <p>Descargue el formulario diligenciado (página 1 de la plantilla DIAN).</p>
           {blobUrl && (
             <div className="actions">
               <a href={blobUrl} download={`formulario-${draft?.form ?? "210"}.pdf`}>

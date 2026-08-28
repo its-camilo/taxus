@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseCsvComplement, parseExogenaWorkbook, parsePdfTextAsLines } from "@/lib/exogena/parse";
 import { extractText } from "unpdf";
-import type { ExogenaLine, FormCode } from "@/lib/types";
+import type { ExogenaLine, ExternalDocSummary, FormCode } from "@/lib/types";
 
 export const maxDuration = 60;
 
@@ -28,6 +28,8 @@ export async function POST(req: Request) {
     suggestedForm: "210" as FormCode,
   };
   const warnings: string[] = [];
+  const sheets: { name: string; rowCount: number; linesExtracted: number }[] = [];
+  const externalDocs: ExternalDocSummary[] = [];
 
   for (const file of files) {
     const buf = await file.arrayBuffer();
@@ -41,15 +43,20 @@ export async function POST(req: Request) {
         warnings.push(`${file.name}: sin filas de exógena reconocidas`);
       }
       warnings.push(...parsed.warnings);
+      sheets.push(...parsed.sheets);
     } else if (name.endsWith(".csv")) {
       const text = new TextDecoder().decode(buf);
-      lines = lines.concat(parseCsvComplement(text, file.name));
+      const csvLines = parseCsvComplement(text, file.name);
+      lines = lines.concat(csvLines);
+      externalDocs.push({ name: file.name, type: "csv", linesExtracted: csvLines.length });
     } else if (name.endsWith(".pdf")) {
       try {
         const extracted = await extractText(new Uint8Array(buf));
         const raw = (extracted as { text?: unknown }).text ?? extracted;
         const joined = Array.isArray(raw) ? raw.join("\n") : String(raw);
-        lines = lines.concat(parsePdfTextAsLines(joined, file.name));
+        const pdfLines = parsePdfTextAsLines(joined, file.name);
+        lines = lines.concat(pdfLines);
+        externalDocs.push({ name: file.name, type: "pdf", linesExtracted: pdfLines.length });
       } catch {
         warnings.push(`${file.name}: no se pudo leer el texto del PDF`);
       }
@@ -59,5 +66,12 @@ export async function POST(req: Request) {
   }
 
   const formCode: FormCode = requested === "auto" ? taxpayer.suggestedForm : requested;
-  return NextResponse.json({ taxpayer: { ...taxpayer, suggestedForm: formCode }, lines, warnings, form: formCode });
+  return NextResponse.json({
+    taxpayer: { ...taxpayer, suggestedForm: formCode },
+    lines,
+    warnings,
+    sheets,
+    externalDocs,
+    form: formCode,
+  });
 }

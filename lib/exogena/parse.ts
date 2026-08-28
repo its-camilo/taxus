@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import type { AmountKind, ExogenaLine, ParseResult, Taxpayer } from "../types";
+import type { AmountKind, ExogenaLine, ParseResult, SheetSummary, Taxpayer } from "../types";
 
 const FORMAT_KIND: Record<string, AmountKind> = {
   "2276": "trabajo_ingreso",
@@ -174,6 +174,152 @@ function kindForHeader(formato: string, header: string): AmountKind {
   return base;
 }
 
+function parseSheet1001(sheet: ExcelJS.Worksheet, sheetName: string): ExogenaLine[] {
+  const lines: ExogenaLine[] = [];
+  const headerRow = sheet.getRow(1);
+  const headers: string[] = [];
+  headerRow.eachCell({ includeEmpty: true }, (cell, col) => {
+    headers[col - 1] = cellStr(cell.value);
+  });
+  const idx = headerIndex(headers);
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) {
+      return;
+    }
+    const values: unknown[] = [];
+    row.eachCell({ includeEmpty: true }, (cell, col) => {
+      values[col - 1] = cell.value;
+    });
+    const informante = cellStr(
+      pick(values, idx, "Razón Social Informante") ?? pick(values, idx, "Nombre / Razón Social"),
+    );
+    if (!informante) {
+      return;
+    }
+    const rete = cellNum(pick(values, idx, "Retención en la fuente practicada renta (cas40)"));
+    if (rete) {
+      lines.push({
+        formato: "1001",
+        concepto: cellStr(pick(values, idx, "Cód. Concepto")),
+        conceptoNombre: cellStr(pick(values, idx, "Desc. Concepto")),
+        informante,
+        monto: rete,
+        tipoMonto: "retencion_renta",
+        kind: "retencion",
+        evidencia: `1001 ${informante}`,
+        sheetName,
+      });
+    }
+    for (const [header, i] of Object.entries(idx)) {
+      if (i === undefined || !/retenci|pago|valor|monto/i.test(header)) {
+        continue;
+      }
+      const monto = cellNum(values[i]);
+      if (monto === 0 || header.includes("Retención en la fuente practicada renta (cas40)")) {
+        continue;
+      }
+      lines.push({
+        formato: "1001",
+        concepto: cellStr(pick(values, idx, "Cód. Concepto")),
+        conceptoNombre: header,
+        informante,
+        monto,
+        tipoMonto: header,
+        kind: /retenci/i.test(header) ? "retencion" : "ambiguous",
+        evidencia: `1001 ${informante} ${header}`,
+        sheetName,
+      });
+    }
+  });
+  return lines;
+}
+
+function parseGenericSheet(sheet: ExcelJS.Worksheet, sheetName: string): ExogenaLine[] {
+  const lines: ExogenaLine[] = [];
+  const formatoMatch = sheetName.match(/\b(\d{4})\b/);
+  const formatoHint = formatoMatch?.[1];
+  let headerRowNum = 1;
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber > 15) {
+      return;
+    }
+    const first = cellStr(row.getCell(1).value).toLowerCase();
+    if (
+      first.includes("código de formato") ||
+      first.includes("codigo de formato") ||
+      first.includes("cód. concepto") ||
+      first.includes("razón social")
+    ) {
+      headerRowNum = rowNumber;
+    }
+  });
+  const headerRow = sheet.getRow(headerRowNum);
+  const headers: string[] = [];
+  headerRow.eachCell({ includeEmpty: true }, (cell, col) => {
+    headers[col - 1] = cellStr(cell.value);
+  });
+  const idx = headerIndex(headers);
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber <= headerRowNum) {
+      return;
+    }
+    const values: unknown[] = [];
+    row.eachCell({ includeEmpty: true }, (cell, col) => {
+      values[col - 1] = cell.value;
+    });
+    const formato =
+      cellStr(pick(values, idx, "Código de Formato")) ||
+      formatoHint ||
+      "";
+    const informante = cellStr(
+      pick(values, idx, "Nombre / Razón Social") ??
+        pick(values, idx, "Razón Social Informante") ??
+        pick(values, idx, "Razón Social"),
+    );
+    for (let i = 0; i < headers.length; i += 1) {
+      const header = headers[i];
+      if (!header) {
+        continue;
+      }
+      const monto = cellNum(values[i]);
+      if (monto === 0) {
+        continue;
+      }
+      const isMoney =
+        /monto|valor|ingreso|saldo|rendim|retenci|pago|total|compra|costo|gasto|invers/i.test(header) ||
+        i >= 20;
+      if (!isMoney) {
+        continue;
+      }
+      const fmt = /^\d{4}$/.test(formato) ? formato : formatoHint ?? "hoja";
+      lines.push({
+        formato: fmt,
+        informante: informante || sheetName,
+        monto,
+        tipoMonto: header,
+        kind: fmt in FORMAT_KIND ? kindForHeader(fmt, header) : "ambiguous",
+        evidencia: `${sheetName} ${header}`,
+        sheetName,
+      });
+    }
+  });
+  return lines;
+}
+
+function dedupeLines(lines: ExogenaLine[]): ExogenaLine[] {
+  const seen = new Set<string>();
+  const out: ExogenaLine[] = [];
+  for (const line of lines) {
+    const key = `${line.sheetName ?? ""}|${line.formato ?? ""}|${line.tipoMonto}|${line.monto}|${line.informante}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    out.push(line);
+  }
+  return out;
+}
+
 function findHeaderRow(sheet: ExcelJS.Worksheet): number {
   let headerRow = 12;
   sheet.eachRow((row, rowNumber) => {
@@ -192,100 +338,87 @@ export async function parseExogenaWorkbook(buffer: ArrayBuffer): Promise<ParseRe
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
   const warnings: string[] = [];
-  const lines: ExogenaLine[] = [];
+  const allLines: ExogenaLine[] = [];
+  const sheets: SheetSummary[] = [];
 
   const general = wb.worksheets.find((s) =>
     s.name.toLowerCase().includes("reporteinformadogeneral"),
   );
+
+  for (const sheet of wb.worksheets) {
+    const sheetName = sheet.name.trim();
+    const isGeneral = sheet.name.toLowerCase().includes("reporteinformadogeneral");
+    const is1001 = sheet.name.toLowerCase().includes("1001");
+    let sheetLines: ExogenaLine[] = [];
+
+    if (isGeneral) {
+      const headerRowNum = findHeaderRow(sheet);
+      const headerRow = sheet.getRow(headerRowNum);
+      const headers: string[] = [];
+      headerRow.eachCell({ includeEmpty: true }, (cell, col) => {
+        headers[col - 1] = cellStr(cell.value);
+      });
+      const idx = headerIndex(headers);
+
+      sheet.eachRow((row, rowNumber) => {
+        if (rowNumber <= headerRowNum) {
+          return;
+        }
+        const values: unknown[] = [];
+        row.eachCell({ includeEmpty: true }, (cell, col) => {
+          values[col - 1] = cell.value;
+        });
+        const formato = cellStr(pick(values, idx, "Código de Formato"));
+        if (!formato || !/^\d+$/.test(formato)) {
+          return;
+        }
+        const informante = cellStr(pick(values, idx, "Nombre / Razón Social"));
+        const concepto = cellStr(pick(values, idx, "Código Concepto"));
+        const conceptoNombre = cellStr(pick(values, idx, "Nombre Concepto"));
+        const wanted = MONEY_HEADERS[formato] ?? [];
+        const used = wanted.length > 0 ? wanted : headers.filter((h, i) => i >= 20 && cellNum(values[i]) !== 0);
+        for (const header of used) {
+          const i = idx[header];
+          if (i === undefined) {
+            continue;
+          }
+          const monto = cellNum(values[i]);
+          if (monto === 0) {
+            continue;
+          }
+          sheetLines.push({
+            formato,
+            concepto,
+            conceptoNombre,
+            informante,
+            nitInformante: cellStr(pick(values, idx, "NIT")),
+            monto,
+            tipoMonto: header,
+            kind: kindForHeader(formato, header),
+            evidencia: `${formato} ${informante} ${header}`,
+            sheetName,
+          });
+        }
+      });
+    } else if (is1001) {
+      sheetLines = parseSheet1001(sheet, sheetName);
+    } else {
+      sheetLines = parseGenericSheet(sheet, sheetName);
+    }
+
+    sheets.push({
+      name: sheetName,
+      rowCount: sheet.rowCount,
+      linesExtracted: sheetLines.length,
+    });
+    allLines.push(...sheetLines);
+  }
+
   if (!general) {
     warnings.push("No se encontró la hoja reporteInformadoGeneralXls.");
-  } else {
-    const headerRowNum = findHeaderRow(general);
-    const headerRow = general.getRow(headerRowNum);
-    const headers: string[] = [];
-    headerRow.eachCell({ includeEmpty: true }, (cell, col) => {
-      headers[col - 1] = cellStr(cell.value);
-    });
-    const idx = headerIndex(headers);
-
-    general.eachRow((row, rowNumber) => {
-      if (rowNumber <= headerRowNum) {
-        return;
-      }
-      const values: unknown[] = [];
-      row.eachCell({ includeEmpty: true }, (cell, col) => {
-        values[col - 1] = cell.value;
-      });
-      const formato = cellStr(pick(values, idx, "Código de Formato"));
-      if (!formato || !/^\d+$/.test(formato)) {
-        return;
-      }
-      const informante = cellStr(pick(values, idx, "Nombre / Razón Social"));
-      const concepto = cellStr(pick(values, idx, "Código Concepto"));
-      const conceptoNombre = cellStr(pick(values, idx, "Nombre Concepto"));
-      const wanted = MONEY_HEADERS[formato] ?? [];
-      const used = wanted.length > 0 ? wanted : headers.filter((h, i) => i >= 20 && cellNum(values[i]) !== 0);
-      for (const header of used) {
-        const i = idx[header];
-        if (i === undefined) {
-          continue;
-        }
-        const monto = cellNum(values[i]);
-        if (monto === 0) {
-          continue;
-        }
-        lines.push({
-          formato,
-          concepto,
-          conceptoNombre,
-          informante,
-          nitInformante: cellStr(pick(values, idx, "NIT")),
-          monto,
-          tipoMonto: header,
-          kind: kindForHeader(formato, header),
-          evidencia: `${formato} ${informante} ${header}`,
-        });
-      }
-    });
   }
 
-  const sheet1001 = wb.worksheets.find((s) => s.name.toLowerCase().includes("1001"));
-  if (sheet1001) {
-    const headerRow = sheet1001.getRow(1);
-    const headers: string[] = [];
-    headerRow.eachCell({ includeEmpty: true }, (cell, col) => {
-      headers[col - 1] = cellStr(cell.value);
-    });
-    const idx = headerIndex(headers);
-    sheet1001.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) {
-        return;
-      }
-      const values: unknown[] = [];
-      row.eachCell({ includeEmpty: true }, (cell, col) => {
-        values[col - 1] = cell.value;
-      });
-      const informante = cellStr(
-        pick(values, idx, "Razón Social Informante") ?? pick(values, idx, "Nombre / Razón Social"),
-      );
-      if (!informante) {
-        return;
-      }
-      const rete = cellNum(pick(values, idx, "Retención en la fuente practicada renta (cas40)"));
-      if (rete) {
-        lines.push({
-          formato: "1001",
-          concepto: cellStr(pick(values, idx, "Cód. Concepto")),
-          conceptoNombre: cellStr(pick(values, idx, "Desc. Concepto")),
-          informante,
-          monto: rete,
-          tipoMonto: "retencion_renta",
-          kind: "retencion",
-          evidencia: `1001 ${informante}`,
-        });
-      }
-    });
-  }
+  const lines = dedupeLines(allLines);
 
   const header = general ? extractHeaderTaxpayer(general) : null;
   const first = general?.getRow(13);
@@ -314,7 +447,12 @@ export async function parseExogenaWorkbook(buffer: ArrayBuffer): Promise<ParseRe
     warnings.push("No se extrajeron montos. Verifique que el archivo sea información exógena DIAN.");
   }
 
-  return { taxpayer, lines, warnings };
+  const emptySheets = sheets.filter((s) => s.linesExtracted === 0);
+  if (emptySheets.length > 0) {
+    warnings.push(`Hojas sin montos extraídos: ${emptySheets.map((s) => s.name).join(", ")}`);
+  }
+
+  return { taxpayer, lines, warnings, sheets };
 }
 
 export function parseCsvComplement(text: string, filename: string): ExogenaLine[] {

@@ -292,17 +292,17 @@ describe("overrides and classify fallback", () => {
 });
 
 describe("triple review", () => {
-  it("runs three passes before draft", async () => {
+  it("runs four fallback passes without API key", async () => {
     delete process.env.OPENROUTER_API_KEY;
     const { tripleReviewSources } = await import("@/lib/rag/triple-review");
     const lines = [
       line({ monto: 100, kind: "trabajo_ingreso", formato: "2276", tipoMonto: "Certificado - Total ingresos brutos rentas de trabajo y pensión" }),
     ];
-    const out = await tripleReviewSources(lines, taxpayer, "210");
-    expect(out.passes).toHaveLength(3);
-    expect(out.passes[0]?.label).toContain("Integridad");
-    expect(out.passes[1]?.label).toContain("Estatuto");
-    expect(out.passes[2]?.label).toContain("Consolidación");
+    const out = await tripleReviewSources(lines, taxpayer, "210", [
+      { name: "reporteInformadoGeneralXls", rowCount: 10, linesExtracted: 1 },
+    ]);
+    expect(out.passes.length).toBeGreaterThanOrEqual(4);
+    expect(out.passes[0]?.agent).toBe("revision-completa");
   });
 });
 

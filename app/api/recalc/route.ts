@@ -8,7 +8,14 @@ export async function POST(req: Request) {
     taxpayer: Taxpayer;
     lines: ExogenaLine[];
     overrides: Record<string, number>;
+    textOverrides?: Record<string, string>;
   };
-  const casillas = recalc(body.form, body.taxpayer, body.lines, body.overrides ?? {});
+  const casillas = recalc(
+    body.form,
+    body.taxpayer,
+    body.lines,
+    body.overrides ?? {},
+    body.textOverrides ?? {},
+  );
   return NextResponse.json({ casillas });
 }

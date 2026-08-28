@@ -107,7 +107,12 @@ function c(
   };
 }
 
-export function build210(taxpayer: Taxpayer, lines: ExogenaLine[], overrides: Record<string, number> = {}): Casilla[] {
+export function build210(
+  taxpayer: Taxpayer,
+  lines: ExogenaLine[],
+  overrides: Record<string, number> = {},
+  textOverrides: Record<string, string> = {},
+): Casilla[] {
   const labels = LABELS_210;
   const year = taxpayer.year;
   const trabajo = sum(lines, "trabajo_ingreso", /ingresos brutos|trabajo y pensión/i) || sum(lines, "trabajo_ingreso");
@@ -177,6 +182,7 @@ export function build210(taxpayer: Taxpayer, lines: ExogenaLine[], overrides: Re
     "8": taxpayer.secondLastName ?? "",
     "9": taxpayer.firstName ?? "",
     "10": taxpayer.otherNames ?? "",
+    ...textOverrides,
   };
   const sources: Record<string, string> = {
     "32": "Formato 2276 — rentas de trabajo",
@@ -197,7 +203,12 @@ export function build210(taxpayer: Taxpayer, lines: ExogenaLine[], overrides: Re
   });
 }
 
-export function build110(taxpayer: Taxpayer, lines: ExogenaLine[], overrides: Record<string, number> = {}): Casilla[] {
+export function build110(
+  taxpayer: Taxpayer,
+  lines: ExogenaLine[],
+  overrides: Record<string, number> = {},
+  textOverrides: Record<string, string> = {},
+): Casilla[] {
   const labels = LABELS_110;
   const ingresosOrd = sum(lines, "no_laboral_ingreso") + sum(lines, "trabajo_ingreso");
   const financieros = lines.filter((l) => /rendim/i.test(l.tipoMonto)).reduce((a, l) => a + l.monto, 0);
@@ -242,6 +253,7 @@ export function build110(taxpayer: Taxpayer, lines: ExogenaLine[], overrides: Re
     "5": taxpayer.documentNumber,
     "6": taxpayer.dv ?? "",
     "11": taxpayer.fullName,
+    ...textOverrides,
   };
   return order.map((id) => {
     if (text[id] !== undefined) {
@@ -252,7 +264,10 @@ export function build110(taxpayer: Taxpayer, lines: ExogenaLine[], overrides: Re
   });
 }
 
-export function applyOverrides(casillas: Casilla[], overrides: Record<string, number | string>): Casilla[] {
+export function applyOverrides(
+  casillas: Casilla[],
+  overrides: Record<string, number | string>,
+): Casilla[] {
   return casillas.map((c) => {
     if (overrides[c.id] === undefined) {
       return c;
@@ -261,8 +276,47 @@ export function applyOverrides(casillas: Casilla[], overrides: Record<string, nu
   });
 }
 
-export function recalc(form: FormCode, taxpayer: Taxpayer, lines: ExogenaLine[], overrides: Record<string, number>): Casilla[] {
-  return form === "110" ? build110(taxpayer, lines, overrides) : build210(taxpayer, lines, overrides);
+export function taxpayerFromCasillas(form: FormCode, base: Taxpayer, textOverrides: Record<string, string>): Taxpayer {
+  if (form === "110") {
+    const fullName = textOverrides["11"] ?? base.fullName;
+    return {
+      ...base,
+      year: Number(textOverrides["1"]) || base.year,
+      documentNumber: textOverrides["5"] ?? base.documentNumber,
+      dv: textOverrides["6"] ?? base.dv,
+      fullName,
+    };
+  }
+  const firstLastName = textOverrides["7"] ?? base.firstLastName;
+  const secondLastName = textOverrides["8"] ?? base.secondLastName;
+  const firstName = textOverrides["9"] ?? base.firstName;
+  const otherNames = textOverrides["10"] ?? base.otherNames;
+  const fullName =
+    [firstLastName, secondLastName, firstName, otherNames].filter(Boolean).join(" ") || base.fullName;
+  return {
+    ...base,
+    year: Number(textOverrides["1"]) || base.year,
+    documentNumber: textOverrides["5"] ?? base.documentNumber,
+    dv: textOverrides["6"] ?? base.dv,
+    firstLastName,
+    secondLastName,
+    firstName,
+    otherNames,
+    fullName,
+  };
+}
+
+export function recalc(
+  form: FormCode,
+  taxpayer: Taxpayer,
+  lines: ExogenaLine[],
+  overrides: Record<string, number>,
+  textOverrides: Record<string, string> = {},
+): Casilla[] {
+  const tp = taxpayerFromCasillas(form, taxpayer, textOverrides);
+  return form === "110"
+    ? build110(tp, lines, overrides, textOverrides)
+    : build210(tp, lines, overrides, textOverrides);
 }
 
 export function toDraft(form: FormCode, taxpayer: Taxpayer, lines: ExogenaLine[]): DeclarationDraft {
